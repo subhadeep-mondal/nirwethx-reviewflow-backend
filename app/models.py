@@ -35,6 +35,7 @@ class User(Base):
     phone: Mapped[str] = mapped_column(String(24), default="", nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="owner")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
