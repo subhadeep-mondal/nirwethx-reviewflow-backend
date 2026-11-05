@@ -375,6 +375,12 @@ def admin_accounts(admin: User = Depends(require_platform_admin), db: Session = 
         if not tenant: continue
         sub = db.query(Subscription).filter(Subscription.tenant_id == tenant.id).first()
         reviews = db.query(func.count(Feedback.id)).filter(Feedback.tenant_id == tenant.id).scalar() or 0
+        qr_stats = db.query(
+            func.coalesce(func.sum(QRCode.scans_count), 0),
+            func.coalesce(func.sum(QRCode.google_clicks_count), 0),
+        ).filter(QRCode.tenant_id == tenant.id).first()
+        total_qr_scans = int(qr_stats[0] or 0)
+        google_review_clicks = int(qr_stats[1] or 0)
         plan_amount = int(sub.amount_inr or 0) if sub else 0
         joined_at = account.created_at
         if joined_at:
@@ -389,7 +395,10 @@ def admin_accounts(admin: User = Depends(require_platform_admin), db: Session = 
             "plan": sub.plan_tier if sub else "none", "plan_amount_inr": plan_amount,
             "plan_status": sub.status if sub else "none",
             "plan_end_date": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
-            "review_count": reviews, "joined_at": joined_at.isoformat() if joined_at else None
+            "review_count": reviews, "feedback_count": reviews,
+            "google_review_clicks": google_review_clicks, "total_qr_scans": total_qr_scans,
+            "business_profile_connected": bool((tenant.google_business_url or "").strip()),
+            "joined_at": joined_at.isoformat() if joined_at else None
         })
     return {"accounts": results, "total": len(results), "revenue": {"currency": "INR", "basis": "signup_plan_amount", "total_to_date": revenue_total, "last_30_days": revenue_30_days, "today": revenue_today}}
 @app.patch("/api/admin/accounts/{user_id}/status")
@@ -404,3 +413,25 @@ def admin_set_account_status(user_id: str, payload: dict, admin: User = Depends(
     db.add(AuditLog(id=new_id(), tenant_id=account.tenant_id, actor_id=admin.id, actor_email=admin.email, action="account.enabled" if active else "account.disabled", resource_type="user", resource_id=account.id, metadata_json={"target_email": account.email}))
     db.commit()
     return {"ok": True, "user_id": account.id, "is_active": account.is_active}
+
+
+@app.delete("/api/admin/accounts/{user_id}")
+def admin_delete_account(user_id: str, admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)):
+    account = db.query(User).filter(User.id == user_id).first()
+    if not account:
+        raise HTTPException(404, "Account not found")
+    if account.role == "platform_admin":
+        raise HTTPException(403, "Platform administrator accounts cannot be deleted here")
+    tenant_id = account.tenant_id
+    # Remove tenant-owned records explicitly for consistent PostgreSQL/SQLite deletion.
+    db.query(ConsentRecord).filter(ConsentRecord.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(Notification).filter(Notification.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(Feedback).filter(Feedback.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(ScanEvent).filter(ScanEvent.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(QRCode).filter(QRCode.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(Subscription).filter(Subscription.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(AuditLog).filter(AuditLog.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(User).filter(User.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(Tenant).filter(Tenant.id == tenant_id).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted_user_id": user_id}
