@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     if "phone" not in user_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(24) NOT NULL DEFAULT ''"))
+    user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    if "is_active" not in user_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
     feedback_columns = {column["name"] for column in inspect(engine).get_columns("feedback_entries")}
     if "category_ratings" not in feedback_columns:
         with engine.begin() as connection:
@@ -131,7 +135,7 @@ def logout(response: Response):
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     tenant = tenant_for(db, user)
-    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role, "phone": user.phone}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "google_business_url": tenant.google_business_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
+    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role, "phone": user.phone, "is_active": user.is_active}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "google_business_url": tenant.google_business_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
 
 # --- Dashboard and analytics ---
 @app.get("/api/dashboard/summary")
@@ -334,3 +338,41 @@ def export_feedback(user: User = Depends(current_user), db: Session = Depends(ge
 def create_contact(payload: ContactIn, db: Session = Depends(get_db)):
     ticket = ContactTicket(id=new_id(), ticket_type=payload.ticket_type, full_name=payload.full_name, email=payload.email.lower(), phone=payload.phone, business_name=payload.business_name, message=payload.message)
     db.add(ticket); db.commit(); return {"ok": True, "ticket_id": ticket.id, "message": "Your request has been received."}
+
+# --- Platform super-admin ---
+def require_platform_admin(user: User = Depends(current_user)) -> User:
+    if user.role != "platform_admin":
+        raise HTTPException(403, "Platform administrator access required")
+    return user
+
+@app.get("/api/admin/accounts")
+def admin_accounts(admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)):
+    users = db.query(User).order_by(desc(User.created_at)).all()
+    results = []
+    for account in users:
+        tenant = db.query(Tenant).filter(Tenant.id == account.tenant_id).first()
+        if not tenant: continue
+        sub = db.query(Subscription).filter(Subscription.tenant_id == tenant.id).first()
+        reviews = db.query(func.count(Feedback.id)).filter(Feedback.tenant_id == tenant.id).scalar() or 0
+        results.append({
+            "user_id": account.id, "email": account.email, "full_name": account.full_name,
+            "phone": account.phone, "is_active": account.is_active, "role": account.role,
+            "business_name": tenant.business_name, "category": tenant.category,
+            "plan": sub.plan_tier if sub else "none", "plan_status": sub.status if sub else "none",
+            "plan_end_date": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+            "review_count": reviews, "joined_at": account.created_at.isoformat() if account.created_at else None
+        })
+    return {"accounts": results, "total": len(results)}
+
+@app.patch("/api/admin/accounts/{user_id}/status")
+def admin_set_account_status(user_id: str, payload: dict, admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)):
+    active = payload.get("is_active")
+    if not isinstance(active, bool): raise HTTPException(422, "is_active must be true or false")
+    account = db.query(User).filter(User.id == user_id).first()
+    if not account: raise HTTPException(404, "Account not found")
+    if account.id == admin.id and not active: raise HTTPException(400, "You cannot disable your own administrator account")
+    if account.role == "platform_admin": raise HTTPException(403, "Platform administrator accounts cannot be disabled here")
+    account.is_active = active
+    db.add(AuditLog(id=new_id(), tenant_id=account.tenant_id, actor_id=admin.id, actor_email=admin.email, action="account.enabled" if active else "account.disabled", resource_type="user", resource_id=account.id, metadata_json={"target_email": account.email}))
+    db.commit()
+    return {"ok": True, "user_id": account.id, "is_active": account.is_active}
