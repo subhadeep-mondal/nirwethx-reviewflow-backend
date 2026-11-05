@@ -32,6 +32,7 @@ class QRUpdateIn(BaseModel):
 class FeedbackIn(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str = Field(default="", max_length=2000)
+    category_ratings: dict[str, int] = Field(default_factory=dict)
     customer_name: str = Field(default="Anonymous Customer", max_length=120)
     customer_phone: str = Field(default="", max_length=24)
     consent_to_contact: bool = False
