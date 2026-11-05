@@ -6,7 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, or_, and_
+from sqlalchemy import func, desc, or_, and_, inspect, text
 from sqlalchemy.exc import IntegrityError
 from pydantic import ValidationError
 import csv, io, json, time, uuid, hmac, hashlib, httpx
@@ -25,6 +25,11 @@ async def lifespan(app: FastAPI):
         if not settings.cookie_secure:
             raise RuntimeError("COOKIE_SECURE must be true in production")
     Base.metadata.create_all(bind=engine)
+    # Add the users.phone column to existing databases without losing account data.
+    user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    if "phone" not in user_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(24) NOT NULL DEFAULT ''"))
 
     # Promote only the explicitly configured existing account to platform admin.
     # ADMIN_EMAIL must be set by the deployment owner in the Render environment.
@@ -83,7 +88,7 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     while db.query(Tenant).filter(Tenant.slug == slug).first(): slug = f"{base}-{uuid.uuid4().hex[:5]}"
     if not payload.google_review_url.startswith("https://"): raise HTTPException(422, "Google review URL must use HTTPS")
     tenant = Tenant(id=tenant_id, owner_user_id=user_id, slug=slug, business_name=payload.business_name.strip(), category=payload.category, city=payload.city, state=payload.state, phone=payload.phone, google_review_url=payload.google_review_url, onboarding_completed=True)
-    user = User(id=user_id, tenant_id=tenant_id, email=email, full_name=payload.full_name.strip(), password_hash=hash_password(payload.password))
+    user = User(id=user_id, tenant_id=tenant_id, email=email, full_name=payload.full_name.strip(), phone=payload.phone.strip(), password_hash=hash_password(payload.password))
     qr = QRCode(id=new_id(), tenant_id=tenant_id, label="Primary Counter", placement_location="Main counter", short_code=uuid.uuid4().hex[:10], theme="teal")
     sub = Subscription(id=new_id(), tenant_id=tenant_id)
     try:
@@ -101,14 +106,14 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
         )
     set_session_cookie(response, create_token(user))
     audit(db, user, "account.registered", "auth", user_id); db.commit()
-    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name}}
+    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "phone": user.phone}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name}}
 
 @app.post("/api/auth/login")
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(func.lower(User.email) == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.password_hash): raise HTTPException(401, "Invalid email or password")
     user.last_login_at = now_utc(); set_session_cookie(response, create_token(user)); db.commit()
-    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name}}
+    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "phone": user.phone}}
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
@@ -117,7 +122,7 @@ def logout(response: Response):
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     tenant = tenant_for(db, user)
-    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
+    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role, "phone": user.phone}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
 
 # --- Dashboard and analytics ---
 @app.get("/api/dashboard/summary")
