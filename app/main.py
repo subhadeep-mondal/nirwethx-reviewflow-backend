@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     if "phone" not in user_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(24) NOT NULL DEFAULT ''"))
+    feedback_columns = {column["name"] for column in inspect(engine).get_columns("feedback_entries")}
+    if "category_ratings" not in feedback_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE feedback_entries ADD COLUMN category_ratings JSON NOT NULL DEFAULT '{}'"))
     tenant_columns = {column["name"] for column in inspect(engine).get_columns("tenants")}
     if "google_business_url" not in tenant_columns:
         with engine.begin() as connection:
@@ -71,7 +75,7 @@ def qr_dict(qr: QRCode):
 
 def feedback_dict(db: Session, fb: Feedback):
     qr = db.query(QRCode).filter(QRCode.id == fb.qr_id, QRCode.tenant_id == fb.tenant_id).first()
-    return {"id": fb.id, "qr_id": fb.qr_id, "qr_label": qr.label if qr else "Deleted QR", "rating": fb.rating, "comment": fb.comment, "customer_name": fb.customer_name, "customer_phone": fb.customer_phone, "consent_to_contact": fb.consent_to_contact, "status": fb.status, "internal_note": fb.internal_note, "created_at": fb.created_at}
+    return {"id": fb.id, "qr_id": fb.qr_id, "qr_label": qr.label if qr else "Deleted QR", "rating": fb.rating, "comment": fb.comment, "category_ratings": fb.category_ratings or {}, "customer_name": fb.customer_name, "customer_phone": fb.customer_phone, "consent_to_contact": fb.consent_to_contact, "status": fb.status, "internal_note": fb.internal_note, "created_at": fb.created_at}
 
 def subscription_dict(sub: Subscription | None):
     if not sub: return None
@@ -207,7 +211,7 @@ def public_feedback(short_code: str, payload: FeedbackIn, request: Request, db: 
     if not qr: raise HTTPException(404, "QR code not found")
     tenant = db.query(Tenant).filter(Tenant.id == qr.tenant_id).first()
     if not tenant or not tenant.show_direct_feedback_form: raise HTTPException(403, "Direct feedback is currently unavailable")
-    fb = Feedback(id=new_id(), tenant_id=tenant.id, qr_id=qr.id, rating=payload.rating, comment=payload.comment.strip(), customer_name=payload.customer_name.strip() or "Anonymous Customer", customer_phone=payload.customer_phone.strip(), consent_to_contact=payload.consent_to_contact)
+    fb = Feedback(id=new_id(), tenant_id=tenant.id, qr_id=qr.id, rating=payload.rating, comment=payload.comment.strip(), category_ratings=payload.category_ratings, customer_name=payload.customer_name.strip() or "Anonymous Customer", customer_phone=payload.customer_phone.strip(), consent_to_contact=payload.consent_to_contact)
     qr.feedback_count += 1
     db.add(fb)
     db.add(ScanEvent(id=new_id(), tenant_id=tenant.id, qr_id=qr.id, event_type="direct_feedback_submit", rating_selected=payload.rating, user_agent_summary=request.headers.get("user-agent", "Browser")[:255], ip_hash=hash_ip(request.client.host if request.client else "unknown")))
