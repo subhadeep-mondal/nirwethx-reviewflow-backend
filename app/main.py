@@ -74,7 +74,12 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     try:
         db.add_all([tenant, user, qr, sub]); db.commit()
     except IntegrityError:
-        db.rollback(); raise HTTPException(409, "Could not create account. Please try again.")
+        db.rollback();
+        print("REGISTRATION DATABASE ERROR:", str(exc.orig))
+        raise HTTPException(
+            status_code=409,
+            detail="Registration failed due to a database constraint. Check server logs."
+        )
     set_session_cookie(response, create_token(user))
     audit(db, user, "account.registered", "auth", user_id); db.commit()
     return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name}}
