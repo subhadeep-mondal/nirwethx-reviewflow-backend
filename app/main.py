@@ -271,11 +271,11 @@ def update_business(payload: BusinessUpdateIn, user: User = Depends(current_user
 @app.get("/api/billing")
 def billing(user: User = Depends(current_user), db: Session = Depends(get_db)):
     sub = db.query(Subscription).filter(Subscription.tenant_id == user.tenant_id).first()
-    return {"subscription": subscription_dict(sub), "razorpay_configured": bool(settings.razorpay_key_id and settings.razorpay_key_secret), "plans": [{"id": "monthly_299", "name": "Monthly", "amount_inr": 299, "cycle": "monthly"}, {"id": "yearly_2999", "name": "Annual", "amount_inr": 2999, "cycle": "yearly"}]}
+    return {"subscription": subscription_dict(sub), "razorpay_configured": bool(settings.razorpay_key_id and settings.razorpay_key_secret), "plans": [{"id": "monthly_299", "name": "Monthly", "amount_inr": 349, "cycle": "monthly"}, {"id": "yearly_2999", "name": "Annual", "amount_inr": 3499, "cycle": "yearly"}]}
 
 @app.post("/api/billing/create-order")
 async def create_billing_order(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    plans = {"monthly_299": (299, "monthly"), "yearly_2999": (2999, "yearly")}
+    plans = {"monthly_299": (349, "monthly"), "yearly_2999": (3499, "yearly")}
     plan = plans.get(payload.get("plan_tier"))
     if not plan: raise HTTPException(422, "Choose a valid plan")
     if not settings.razorpay_key_id or not settings.razorpay_key_secret: raise HTTPException(503, "Razorpay is not configured. Add API credentials to backend/.env to enable checkout.")
