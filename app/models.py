@@ -17,6 +17,7 @@ class Tenant(Base):
     phone: Mapped[str] = mapped_column(String(24), default="")
     gstin: Mapped[str] = mapped_column(String(30), default="")
     google_review_url: Mapped[str] = mapped_column(Text, default="https://www.google.com/maps")
+    google_business_url: Mapped[str] = mapped_column(Text, default="")
     welcome_headline: Mapped[str] = mapped_column(String(180), default="Share your honest experience with us")
     welcome_subtext: Mapped[str] = mapped_column(Text, default="Your feedback helps us serve you better.")
     brand_accent: Mapped[str] = mapped_column(String(20), default="#14b8a6")
