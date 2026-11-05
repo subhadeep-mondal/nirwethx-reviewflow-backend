@@ -72,9 +72,13 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     qr = QRCode(id=new_id(), tenant_id=tenant_id, label="Primary Counter", placement_location="Main counter", short_code=uuid.uuid4().hex[:10], theme="teal")
     sub = Subscription(id=new_id(), tenant_id=tenant_id)
     try:
-        db.add_all([tenant, user, qr, sub]); db.commit()
+        # Persist the parent tenant before inserting rows that reference it.
+        db.add(tenant)
+        db.flush()
+        db.add_all([user, qr, sub])
+        db.commit()
     except IntegrityError as exc:
-        db.rollback();
+        db.rollback()
         print("REGISTRATION DATABASE ERROR:", str(exc.orig))
         raise HTTPException(
             status_code=409,
