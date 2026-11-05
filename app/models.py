@@ -101,6 +101,7 @@ class Subscription(Base):
     plan_tier: Mapped[str] = mapped_column(String(30), default="free_trial")
     status: Mapped[str] = mapped_column(String(24), default="trialing")
     amount_inr: Mapped[int] = mapped_column(Integer, default=0)
+    amount_paise: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(20), default="trial")
     provider: Mapped[str] = mapped_column(String(20), default="test_mode")
     provider_order_id: Mapped[str] = mapped_column(String(120), default="")
