@@ -35,6 +35,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid or expired session")
     if not user: raise HTTPException(401, "Session user not found")
+    if not user.is_active: raise HTTPException(403, "This account has been disabled. Contact support.")
     return user
 
 def slugify(value: str) -> str:
