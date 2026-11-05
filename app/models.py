@@ -71,6 +71,7 @@ class Feedback(Base):
     qr_id: Mapped[str] = mapped_column(ForeignKey("qr_codes.id", ondelete="CASCADE"), index=True)
     rating: Mapped[int] = mapped_column(Integer)
     comment: Mapped[str] = mapped_column(Text, default="")
+    category_ratings: Mapped[dict] = mapped_column(JSON, default=dict)
     customer_name: Mapped[str] = mapped_column(String(120), default="Anonymous Customer")
     customer_phone: Mapped[str] = mapped_column(String(24), default="")
     consent_to_contact: Mapped[bool] = mapped_column(Boolean, default=False)
