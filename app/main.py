@@ -348,23 +348,36 @@ def require_platform_admin(user: User = Depends(current_user)) -> User:
 
 @app.get("/api/admin/accounts")
 def admin_accounts(admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)):
-    users = db.query(User).order_by(desc(User.created_at)).all()
+    users = db.query(User).filter(User.role != "platform_admin").order_by(desc(User.created_at)).all()
     results = []
+    revenue_total = 0
+    revenue_30_days = 0
+    revenue_today = 0
+    india_tz = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(india_tz).date()
+    thirty_days_ago = today - timedelta(days=29)
     for account in users:
         tenant = db.query(Tenant).filter(Tenant.id == account.tenant_id).first()
         if not tenant: continue
         sub = db.query(Subscription).filter(Subscription.tenant_id == tenant.id).first()
         reviews = db.query(func.count(Feedback.id)).filter(Feedback.tenant_id == tenant.id).scalar() or 0
+        plan_amount = int(sub.amount_inr or 0) if sub else 0
+        joined_at = account.created_at
+        if joined_at:
+            joined_local_date = joined_at.replace(tzinfo=timezone.utc).astimezone(india_tz).date() if joined_at.tzinfo is None else joined_at.astimezone(india_tz).date()
+            revenue_total += plan_amount
+            if thirty_days_ago <= joined_local_date <= today: revenue_30_days += plan_amount
+            if joined_local_date == today: revenue_today += plan_amount
         results.append({
             "user_id": account.id, "email": account.email, "full_name": account.full_name,
             "phone": account.phone, "is_active": account.is_active, "role": account.role,
             "business_name": tenant.business_name, "category": tenant.category,
-            "plan": sub.plan_tier if sub else "none", "plan_status": sub.status if sub else "none",
+            "plan": sub.plan_tier if sub else "none", "plan_amount_inr": plan_amount,
+            "plan_status": sub.status if sub else "none",
             "plan_end_date": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
-            "review_count": reviews, "joined_at": account.created_at.isoformat() if account.created_at else None
+            "review_count": reviews, "joined_at": joined_at.isoformat() if joined_at else None
         })
-    return {"accounts": results, "total": len(results)}
-
+    return {"accounts": results, "total": len(results), "revenue": {"currency": "INR", "basis": "signup_plan_amount", "total_to_date": revenue_total, "last_30_days": revenue_30_days, "today": revenue_today}}
 @app.patch("/api/admin/accounts/{user_id}/status")
 def admin_set_account_status(user_id: str, payload: dict, admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)):
     active = payload.get("is_active")
