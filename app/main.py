@@ -126,7 +126,7 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
-    response.delete_cookie("rf_session", path="/"); return {"ok": True}
+    response.delete_cookie("rf_session", path="/", secure=settings.cookie_secure, httponly=True, samesite=settings.cookie_samesite); return {"ok": True}
 
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
