@@ -11,6 +11,7 @@ class RegisterIn(BaseModel):
     state: str = ""
     phone: str = ""
     google_review_url: str = "https://www.google.com/maps"
+    google_business_url: str = ""
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -47,6 +48,7 @@ class BusinessUpdateIn(BaseModel):
     phone: str = ""
     gstin: str = ""
     google_review_url: str
+    google_business_url: str = ""
     welcome_headline: str = Field(max_length=180)
     welcome_subtext: str = Field(max_length=1000)
     brand_accent: str = "#14b8a6"
