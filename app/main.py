@@ -25,6 +25,21 @@ async def lifespan(app: FastAPI):
         if not settings.cookie_secure:
             raise RuntimeError("COOKIE_SECURE must be true in production")
     Base.metadata.create_all(bind=engine)
+
+    # Promote only the explicitly configured existing account to platform admin.
+    # ADMIN_EMAIL must be set by the deployment owner in the Render environment.
+    if settings.admin_email.strip():
+        with SessionLocal() as db:
+            admin_user = db.query(User).filter(
+                func.lower(User.email) == settings.admin_email.strip().lower()
+            ).first()
+            if admin_user and admin_user.role != "platform_admin":
+                admin_user.role = "platform_admin"
+                db.commit()
+                print(f"Configured platform administrator: {admin_user.email}")
+            elif not admin_user:
+                print("ADMIN_EMAIL is configured, but no matching user exists yet.")
+
     yield
 
 app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
