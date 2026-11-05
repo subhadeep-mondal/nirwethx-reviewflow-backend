@@ -125,6 +125,7 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(func.lower(User.email) == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.password_hash): raise HTTPException(401, "Invalid email or password")
+    if not user.is_active: raise HTTPException(403, "This account has been disabled. Contact support.")
     user.last_login_at = now_utc(); set_session_cookie(response, create_token(user)); db.commit()
     return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "phone": user.phone}}
 
