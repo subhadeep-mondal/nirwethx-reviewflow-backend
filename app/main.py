@@ -34,6 +34,10 @@ async def lifespan(app: FastAPI):
     if "is_active" not in user_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
+    subscription_columns = {column["name"] for column in inspect(engine).get_columns("subscriptions")}
+    if "amount_paise" not in subscription_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE subscriptions ADD COLUMN amount_paise INTEGER NOT NULL DEFAULT 0"))
     feedback_columns = {column["name"] for column in inspect(engine).get_columns("feedback_entries")}
     if "category_ratings" not in feedback_columns:
         with engine.begin() as connection:
@@ -300,20 +304,22 @@ async def create_billing_order(payload: dict, user: User = Depends(current_user)
     plan = plans.get(plan_tier)
     if not plan: raise HTTPException(422, "Choose a valid plan")
     amount, cycle = plan
+    amount_paise = amount * 100
     coupon_code = str(payload.get("coupon_code") or "").strip().upper()
     discount_percent = 0
     if coupon_code:
         if plan_tier != "yearly_2999" or coupon_code != "NEWUSER10OFF":
             raise HTTPException(422, "This coupon is valid only for the annual plan.")
         discount_percent = 10
-        amount = int(round(amount * (100 - discount_percent) / 100))
+        amount_paise = int(round(amount * 100 * (100 - discount_percent) / 100))
+        amount = amount_paise // 100
     if not settings.razorpay_key_id or not settings.razorpay_key_secret: raise HTTPException(503, "Razorpay is not configured. Add API credentials to backend/.env to enable checkout.")
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post("https://api.razorpay.com/v1/orders", auth=(settings.razorpay_key_id, settings.razorpay_key_secret), json={"amount": amount * 100, "currency": "INR", "receipt": f"rf_{uuid.uuid4().hex[:18]}", "notes": {"tenant_id": user.tenant_id, "plan_tier": plan_tier, "coupon_code": coupon_code, "discount_percent": discount_percent}})
+        response = await client.post("https://api.razorpay.com/v1/orders", auth=(settings.razorpay_key_id, settings.razorpay_key_secret), json={"amount": amount_paise, "currency": "INR", "receipt": f"rf_{uuid.uuid4().hex[:18]}", "notes": {"tenant_id": user.tenant_id, "plan_tier": plan_tier, "coupon_code": coupon_code, "discount_percent": discount_percent}})
     if response.status_code >= 300: raise HTTPException(502, "Payment provider could not create an order")
     order = response.json(); sub = db.query(Subscription).filter(Subscription.tenant_id == user.tenant_id).first()
     if not sub: sub = Subscription(id=new_id(), tenant_id=user.tenant_id); db.add(sub)
-    sub.provider_order_id = order["id"]; sub.provider = "razorpay"; sub.amount_inr = amount; sub.plan_tier = plan_tier; sub.billing_cycle = cycle; db.commit()
+    sub.provider_order_id = order["id"]; sub.provider = "razorpay"; sub.amount_inr = amount; sub.amount_paise = amount_paise; sub.plan_tier = plan_tier; sub.billing_cycle = cycle; db.commit()
     return {"order_id": order["id"], "amount": order["amount"], "currency": order["currency"], "key_id": settings.razorpay_key_id, "business_name": tenant_for(db, user).business_name, "email": user.email, "contact": tenant_for(db, user).phone, "discount_percent": discount_percent, "coupon_code": coupon_code, "original_amount_inr": plan[0]}
 
 @app.post("/api/billing/webhook")
@@ -327,7 +333,7 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         entity = event.get("payload", {}).get("payment", {}).get("entity", {})
         order_id = entity.get("order_id"); payment_id = entity.get("id")
         sub = db.query(Subscription).filter(Subscription.provider_order_id == order_id).first()
-        if sub and entity.get("currency") == "INR" and int(entity.get("amount") or 0) == sub.amount_inr * 100:
+        if sub and entity.get("currency") == "INR" and int(entity.get("amount") or 0) == (sub.amount_paise or sub.amount_inr * 100):
             sub.status = "active"; sub.provider_last_payment_id = payment_id or ""; sub.current_period_start = now_utc(); sub.current_period_end = now_utc() + (timedelta(days=365) if sub.billing_cycle == "yearly" else timedelta(days=30)); sub.updated_at = now_utc()
     elif event.get("event") == "payment.failed":
         entity = event.get("payload", {}).get("payment", {}).get("entity", {}); sub = db.query(Subscription).filter(Subscription.provider_order_id == entity.get("order_id")).first()
