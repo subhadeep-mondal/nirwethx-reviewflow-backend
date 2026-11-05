@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     if "phone" not in user_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(24) NOT NULL DEFAULT ''"))
+    tenant_columns = {column["name"] for column in inspect(engine).get_columns("tenants")}
+    if "google_business_url" not in tenant_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE tenants ADD COLUMN google_business_url TEXT NOT NULL DEFAULT ''"))
 
     # Promote only the explicitly configured existing account to platform admin.
     # ADMIN_EMAIL must be set by the deployment owner in the Render environment.
@@ -87,7 +91,8 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     slug = base
     while db.query(Tenant).filter(Tenant.slug == slug).first(): slug = f"{base}-{uuid.uuid4().hex[:5]}"
     if not payload.google_review_url.startswith("https://"): raise HTTPException(422, "Google review URL must use HTTPS")
-    tenant = Tenant(id=tenant_id, owner_user_id=user_id, slug=slug, business_name=payload.business_name.strip(), category=payload.category, city=payload.city, state=payload.state, phone=payload.phone, google_review_url=payload.google_review_url, onboarding_completed=True)
+    if payload.google_business_url and not payload.google_business_url.startswith("https://"): raise HTTPException(422, "Google Business URL must use HTTPS")
+    tenant = Tenant(id=tenant_id, owner_user_id=user_id, slug=slug, business_name=payload.business_name.strip(), category=payload.category, city=payload.city, state=payload.state, phone=payload.phone, google_review_url=payload.google_review_url, google_business_url=payload.google_business_url, onboarding_completed=True)
     user = User(id=user_id, tenant_id=tenant_id, email=email, full_name=payload.full_name.strip(), phone=payload.phone.strip(), password_hash=hash_password(payload.password))
     qr = QRCode(id=new_id(), tenant_id=tenant_id, label="Primary Counter", placement_location="Main counter", short_code=uuid.uuid4().hex[:10], theme="teal")
     sub = Subscription(id=new_id(), tenant_id=tenant_id)
@@ -122,7 +127,7 @@ def logout(response: Response):
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     tenant = tenant_for(db, user)
-    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role, "phone": user.phone}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
+    return {"user": {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role, "phone": user.phone}, "business": {"id": tenant.id, "slug": tenant.slug, "business_name": tenant.business_name, "category": tenant.category, "city": tenant.city, "state": tenant.state, "phone": tenant.phone, "google_review_url": tenant.google_review_url, "google_business_url": tenant.google_business_url, "welcome_headline": tenant.welcome_headline, "welcome_subtext": tenant.welcome_subtext, "brand_accent": tenant.brand_accent, "show_direct_feedback_form": tenant.show_direct_feedback_form}}
 
 # --- Dashboard and analytics ---
 @app.get("/api/dashboard/summary")
@@ -267,6 +272,7 @@ def notification_stream(user: User = Depends(current_user)):
 def update_business(payload: BusinessUpdateIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     tenant = tenant_for(db, user)
     if not payload.google_review_url.startswith("https://"): raise HTTPException(422, "Google review URL must use HTTPS")
+    if payload.google_business_url and not payload.google_business_url.startswith("https://"): raise HTTPException(422, "Google Business URL must use HTTPS")
     if not payload.brand_accent.startswith("#") or len(payload.brand_accent) not in (4, 7): raise HTTPException(422, "Brand accent must be a hex colour")
     for key, value in payload.model_dump().items(): setattr(tenant, key, value)
     tenant.updated_at = now_utc(); audit(db, user, "business.updated", "business_profile", tenant.id); db.commit()
