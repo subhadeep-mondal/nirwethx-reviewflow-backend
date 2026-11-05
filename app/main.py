@@ -73,7 +73,7 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     sub = Subscription(id=new_id(), tenant_id=tenant_id)
     try:
         db.add_all([tenant, user, qr, sub]); db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback();
         print("REGISTRATION DATABASE ERROR:", str(exc.orig))
         raise HTTPException(
